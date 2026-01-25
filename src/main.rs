@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 type Atom = usize;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Literal(isize);
 
 impl fmt::Display for Literal {
@@ -19,6 +19,10 @@ impl Literal {
 
     fn is_positive(&self) -> bool {
         self.0 > 0
+    }
+
+    fn negation(&self) -> Self {
+        Literal(-self.0)
     }
 }
 
@@ -42,16 +46,56 @@ impl FromStr for Clause {
 
 impl fmt::Display for Clause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
         for lit in &self.0 {
-            write!(f, "{} ", lit)?;
+            if !first {
+                write!(f, " ∨ ")?;
+            }
+            write!(f, "{}", lit)?;
+            first = false;
         }
-        write!(f, "0")
+        Ok(())
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+enum ClauseDecision {
+    SAT,
+    UNSAT,
+    Undecided,
+    Unit(Literal),
+}
+
 impl Clause {
-    fn resolve_mut(&mut self, _other: &Clause) {
-        todo!()
+    fn resolve_mut(&mut self, other: &Clause) {
+        println!("({}) ⊙= ({})", self, other);
+        for lit in other.0.iter() {
+            if self.lit_position(*lit).is_some() { /* Do nothing */
+            } else if let Some(pos) = self.lit_position(lit.negation()) {
+                self.0.swap_remove(pos);
+            } else {
+                self.0.push(*lit)
+            }
+        }
+    }
+
+    fn lit_position(&self, lit: Literal) -> Option<usize> {
+        self.0.iter().position(|l| lit == *l)
+    }
+
+    fn decide(&self, valuation: &Valuation) -> ClauseDecision {
+        let mut decision = ClauseDecision::UNSAT;
+        for lit in self.0.iter() {
+            decision = match (decision, valuation.eval_lit(*lit)) {
+                (_, Some(true)) => ClauseDecision::SAT,
+                (_, Some(false)) => decision,
+                (ClauseDecision::SAT, _) => ClauseDecision::SAT,
+                (ClauseDecision::UNSAT, None) => ClauseDecision::Unit(*lit),
+                (ClauseDecision::Undecided, _) => ClauseDecision::Undecided,
+                (ClauseDecision::Unit(_), None) => ClauseDecision::Undecided,
+            };
+        }
+        decision
     }
 }
 
@@ -66,6 +110,7 @@ impl Formula {
             .flat_map(|clause| clause.0.iter())
             .map(|lit| lit.atom())
             .max()
+            .map(|x| x + 1)
             .unwrap_or(0)
     }
 }
@@ -101,13 +146,20 @@ impl fmt::Display for Formula {
 #[derive(Debug, Copy, Clone)]
 enum Reason {
     Decision { level: u32 },
-    Implied { level: u32, antecedent: u32 },
+    Implied { level: u32, antecedent: ClauseIdx },
 }
 
 impl Reason {
     fn level(&self) -> u32 {
         match *self {
             Reason::Decision { level } | Reason::Implied { level, .. } => level,
+        }
+    }
+
+    fn antecedent(&self) -> Option<ClauseIdx> {
+        match *self {
+            Reason::Implied { antecedent, .. } => Some(antecedent),
+            _ => None,
         }
     }
 }
@@ -121,6 +173,45 @@ struct VarData {
 #[derive(Debug, Clone)]
 struct Valuation(Vec<Option<VarData>>);
 
+impl fmt::Display for Valuation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (var, maybe_var_data) in self.0.iter().enumerate() {
+            if let Some(var_data) = maybe_var_data {
+                writeln!(
+                    f,
+                    "{}: {}@{}",
+                    var,
+                    if var_data.value { "⊤" } else { "⊥" },
+                    var_data.reason.level()
+                )?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Valuation {
+    fn eval_lit(&self, lit: Literal) -> Option<bool> {
+        let atom_value = self.0[lit.atom()].map(|d: VarData| d.value);
+        if lit.0 < 0 {
+            atom_value.map(|v| !v)
+        } else {
+            atom_value
+        }
+    }
+
+    fn var_data(&self, var: Atom) -> Option<VarData> {
+        self.0[var]
+    }
+
+    fn learn_literal(&mut self, lit: Literal, reason: Reason) {
+        self.0[lit.atom()] = Some(VarData {
+            value: lit.is_positive(),
+            reason,
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Lilsat {
     formula: Formula,
@@ -133,28 +224,53 @@ enum Answer {
     UNSAT,
 }
 
+impl fmt::Display for Answer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UNSAT => write!(f, "UNSAT")?,
+            Self::SAT(valuation) => {
+                writeln!(f, "SAT")?;
+                write!(f, "{}", valuation)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 type ClauseIdx = usize;
 
-impl Lilsat {
-    fn learn_literal(&mut self, lit: Literal, reason: Reason) {
-        self.valuation.0[lit.atom()] = Some(VarData {
-            value: lit.is_positive(),
-            reason,
-        })
+impl fmt::Display for Lilsat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (var, maybe_var_data) in self.valuation.0.iter().enumerate() {
+            if let Some(var_data) = maybe_var_data {
+                write!(
+                    f,
+                    "{}: {}@{}",
+                    var,
+                    if var_data.value { "⊤" } else { "⊥" },
+                    var_data.reason.level()
+                )?;
+                if let Some(idx) = var_data.reason.antecedent() {
+                    write!(f, " by ({})", &self.formula.0[idx])?;
+                } else {
+                    write!(f, " by decisision")?;
+                }
+                write!(f, "\n")?;
+            }
+        }
+        Ok(())
     }
+}
 
+impl Lilsat {
     fn learn_clause(&mut self, clause: Clause) {
         self.formula.0.push(clause)
-    }
-
-    fn eval_lit(&self, lit: Literal) -> Option<bool> {
-        self.valuation.0[lit.atom()].map(|d: VarData| d.value)
     }
 
     fn choose_lit(&self) -> Option<Literal> {
         for clause in &self.formula.0 {
             for lit in &clause.0 {
-                if let None = self.eval_lit(*lit) {
+                if let None = self.valuation.eval_lit(*lit) {
                     return Some(*lit);
                 }
             }
@@ -162,25 +278,77 @@ impl Lilsat {
         return None;
     }
 
-    fn unit_propagate(&self) -> Result<(), usize> {
-        todo!()
+    fn unit_propagate(&mut self, level: u32) -> Result<(), ClauseIdx> {
+        loop {
+            let mut changed = false;
+            for (idx, clause) in self.formula.0.iter().enumerate() {
+                match clause.decide(&self.valuation) {
+                    ClauseDecision::SAT => {}
+                    ClauseDecision::UNSAT => return Err(idx),
+                    ClauseDecision::Undecided => {}
+                    ClauseDecision::Unit(literal) => {
+                        println!("{} -> {}@{}", self.formula.0[idx], literal, level);
+                        self.valuation.learn_literal(
+                            literal,
+                            Reason::Implied {
+                                level,
+                                antecedent: idx,
+                            },
+                        );
+                        println!("---\n{}", self);
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                return Ok(());
+            }
+        }
     }
 
-    fn get_antecedent_1uip(&self, _level: u32, _conflict_clause: &Clause) -> Option<ClauseIdx> {
-        todo!()
+    fn get_antecedent_1uip(&self, level: u32, conflict_clause: &Clause) -> Option<ClauseIdx> {
+        let mut chosen: Option<ClauseIdx> = None;
+        let mut at_current_level = 0;
+        for lit in conflict_clause.0.iter() {
+            if let Some(d) = self.valuation.var_data(lit.atom()) {
+                if d.reason.level() == level {
+                    at_current_level += 1;
+                    if let Some(antecedent) = d.reason.antecedent() {
+                        chosen = Some(antecedent)
+                    }
+                }
+            }
+        }
+        match at_current_level {
+            0 => panic!("No available pivot"),
+            1 => None,
+            _ => chosen,
+        }
     }
 
     fn analyze_conflict(&self, level: u32, clause: &mut Clause) -> u32 {
         while let Some(antecedent_idx) = self.get_antecedent_1uip(level, clause) {
-            clause.resolve_mut(&self.formula.0[antecedent_idx])
+            clause.resolve_mut(&self.formula.0[antecedent_idx]);
         }
-        todo!("Find backtracking level")
+        clause
+            .0
+            .iter()
+            .map(|lit| {
+                self.valuation.0[lit.atom()]
+                    .expect("Undecided variable in conflict clause")
+                    .reason
+                    .level()
+            })
+            .min()
+            .expect("Empty conflict clause")
     }
 
     fn backtrack_to(&mut self, level: u32) {
-        for maybe_var_data in self.valuation.0.iter_mut() {
+        println!("Backtrack to {}", level);
+        for (var, maybe_var_data) in self.valuation.0.iter_mut().enumerate() {
             if let Some(var_data) = maybe_var_data {
                 if var_data.reason.level() >= level {
+                    println!("  Forget {}@{}", var, var_data.reason.level());
                     *maybe_var_data = None;
                 }
             }
@@ -190,13 +358,15 @@ impl Lilsat {
     fn run(&mut self) -> Answer {
         let mut level: u32 = 0;
         while let Some(lit) = self.choose_lit() {
-            self.learn_literal(lit, Reason::Decision { level });
-            if let Err(conflict_idx) = self.unit_propagate() {
+            self.valuation
+                .learn_literal(lit, Reason::Decision { level });
+            println!("Decide {}@{}", lit, level);
+            if let Err(conflict_idx) = self.unit_propagate(level) {
                 let mut learn_clause = self.formula.0[conflict_idx].clone();
                 level = self.analyze_conflict(level, &mut learn_clause);
                 self.learn_clause(learn_clause);
                 self.backtrack_to(level);
-                if let Err(_) = self.unit_propagate() {
+                if let Err(_) = self.unit_propagate(level) {
                     return Answer::UNSAT;
                 }
             } else {
@@ -235,5 +405,5 @@ fn main() {
         std::process::exit(1);
     });
 
-    println!("{:?}", Lilsat::solve(&formula));
+    println!("{}", Lilsat::solve(&formula));
 }
