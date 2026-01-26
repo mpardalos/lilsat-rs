@@ -120,11 +120,13 @@ impl FromStr for Formula {
     fn from_str(input: &str) -> Result<Self, String> {
         let mut clauses: Vec<Clause> = Vec::new();
         for line in input.lines() {
-            match line.chars().next() {
+            match line.trim().chars().next() {
                 Some('p') => {} // Formula size. Can ignore
                 Some('c') => {} // comment
+                Some('%') => {} // idk, but ignore
+                Some('0') => {} // Empty clause
                 None => {}
-                _ => clauses.push(line.parse::<Clause>()?),
+                _ => clauses.push(line.trim().parse::<Clause>()?),
             }
         }
         Ok(Self(clauses))
