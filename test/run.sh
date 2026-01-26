@@ -60,7 +60,8 @@ updateStatus() {
     success_count=${#SUCCEEDED[@]}
     fail_count=${#FAILED[@]}
     timeout_count=${#TIMEDOUT[@]}
-    echo -ne "\r${success_count} OK | ${fail_count} FAILED | ${timeout_count} TIMEOUT | Running $1        "
+    cols=$(tput cols)
+    printf '\r%-*.*s' "$cols" "$cols" "${success_count} OK | ${fail_count} FAILED | ${timeout_count} TIMEOUT | Running $1"
 }
 
 getSATLIBTests "flat30-60" "sat" "https://www.cs.ubc.ca/~hoos/SATLIB/Benchmarks/SAT/GCP/flat30-60.tar.gz"
