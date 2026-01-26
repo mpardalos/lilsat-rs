@@ -68,7 +68,7 @@ enum ClauseDecision {
 
 impl Clause {
     fn resolve_mut(&mut self, other: &Clause) {
-        println!("({}) ⊙= ({})", self, other);
+        // println!("({}) ⊙= ({})", self, other);
         for lit in other.0.iter() {
             if self.lit_position(*lit).is_some() { /* Do nothing */
             } else if let Some(pos) = self.lit_position(lit.negation()) {
@@ -289,7 +289,7 @@ impl Lilsat {
                     ClauseDecision::UNSAT => return Err(idx),
                     ClauseDecision::Undecided => {}
                     ClauseDecision::Unit(literal) => {
-                        println!("{} -> {}@{}", self.formula.0[idx], literal, level);
+                        // println!("{} -> {}@{}", self.formula.0[idx], literal, level);
                         self.valuation.learn_literal(
                             literal,
                             Reason::Implied {
@@ -297,7 +297,7 @@ impl Lilsat {
                                 antecedent: idx,
                             },
                         );
-                        println!("---\n{}", self);
+                        // println!("---\n{}", self);
                         changed = true;
                     }
                 }
@@ -346,11 +346,11 @@ impl Lilsat {
     }
 
     fn backtrack_to(&mut self, level: u32) {
-        println!("Backtrack to {}", level);
+        // println!("Backtrack to {}", level);
         for (var, maybe_var_data) in self.valuation.0.iter_mut().enumerate() {
             if let Some(var_data) = maybe_var_data {
                 if var_data.reason.level() >= level {
-                    println!("  Forget {}@{}", var, var_data.reason.level());
+                    // println!("  Forget {}@{}", var, var_data.reason.level());
                     *maybe_var_data = None;
                 }
             }
@@ -362,7 +362,7 @@ impl Lilsat {
         while let Some(lit) = self.choose_lit() {
             self.valuation
                 .learn_literal(lit, Reason::Decision { level });
-            println!("Decide {}@{}", lit, level);
+            // println!("Decide {}@{}", lit, level);
             if let Err(conflict_idx) = self.unit_propagate(level) {
                 let mut learn_clause = self.formula.0[conflict_idx].clone();
                 level = self.analyze_conflict(level, &mut learn_clause);
