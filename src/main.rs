@@ -347,7 +347,7 @@ impl Lilsat {
 
     fn backtrack_to(&mut self, level: u32) {
         // println!("Backtrack to {}", level);
-        for (var, maybe_var_data) in self.valuation.0.iter_mut().enumerate() {
+        for (_var, maybe_var_data) in self.valuation.0.iter_mut().enumerate() {
             if let Some(var_data) = maybe_var_data {
                 if var_data.reason.level() >= level {
                     // println!("  Forget {}@{}", var, var_data.reason.level());
