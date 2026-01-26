@@ -167,24 +167,30 @@ impl Reason {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct VarData {
+struct VarValue {
     value: bool,
     reason: Reason,
 }
 
 #[derive(Debug, Clone)]
-struct Valuation(Vec<Option<VarData>>);
+struct VarData {
+    value: Option<VarValue>,
+    watched_by: Vec<ClauseIdx>,
+}
+
+#[derive(Debug, Clone)]
+struct Valuation(Vec<VarData>);
 
 impl fmt::Display for Valuation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (var, maybe_var_data) in self.0.iter().enumerate() {
-            if let Some(var_data) = maybe_var_data {
+        for (var, var_data) in self.0.iter().enumerate() {
+            if let Some(value) = var_data.value {
                 writeln!(
                     f,
                     "{}: {}@{}",
                     var,
-                    if var_data.value { "⊤" } else { "⊥" },
-                    var_data.reason.level()
+                    if value.value { "⊤" } else { "⊥" },
+                    value.reason.level()
                 )?;
             }
         }
@@ -194,7 +200,7 @@ impl fmt::Display for Valuation {
 
 impl Valuation {
     fn eval_lit(&self, lit: Literal) -> Option<bool> {
-        let atom_value = self.0[lit.atom()].map(|d: VarData| d.value);
+        let atom_value = self.0[lit.atom()].value.map(|d: VarValue| d.value);
         if lit.0 < 0 {
             atom_value.map(|v| !v)
         } else {
@@ -202,15 +208,15 @@ impl Valuation {
         }
     }
 
-    fn var_data(&self, var: Atom) -> Option<VarData> {
-        self.0[var]
+    fn var_value(&self, var: Atom) -> Option<VarValue> {
+        self.0[var].value
     }
 
     fn learn_literal(&mut self, lit: Literal, reason: Reason) {
-        self.0[lit.atom()] = Some(VarData {
+        self.0[lit.atom()].value = Some(VarValue {
             value: lit.is_positive(),
             reason,
-        })
+        });
     }
 }
 
@@ -243,16 +249,16 @@ type ClauseIdx = usize;
 
 impl fmt::Display for Lilsat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (var, maybe_var_data) in self.valuation.0.iter().enumerate() {
-            if let Some(var_data) = maybe_var_data {
+        for (var, var_data) in self.valuation.0.iter().enumerate() {
+            if let Some(var_value) = var_data.value {
                 write!(
                     f,
                     "{}: {}@{}",
                     var,
-                    if var_data.value { "⊤" } else { "⊥" },
-                    var_data.reason.level()
+                    if var_value.value { "⊤" } else { "⊥" },
+                    var_value.reason.level()
                 )?;
-                if let Some(idx) = var_data.reason.antecedent() {
+                if let Some(idx) = var_value.reason.antecedent() {
                     write!(f, " by ({})", &self.formula.0[idx])?;
                 } else {
                     write!(f, " by decisision")?;
@@ -312,7 +318,7 @@ impl Lilsat {
         let mut chosen: Option<ClauseIdx> = None;
         let mut at_current_level = 0;
         for lit in conflict_clause.0.iter() {
-            if let Some(d) = self.valuation.var_data(lit.atom()) {
+            if let Some(d) = self.valuation.var_value(lit.atom()) {
                 if d.reason.level() == level {
                     at_current_level += 1;
                     if let Some(antecedent) = d.reason.antecedent() {
@@ -336,7 +342,8 @@ impl Lilsat {
             .0
             .iter()
             .map(|lit| {
-                self.valuation.0[lit.atom()]
+                self.valuation
+                    .var_value(lit.atom())
                     .expect("Undecided variable in conflict clause")
                     .reason
                     .level()
@@ -347,11 +354,11 @@ impl Lilsat {
 
     fn backtrack_to(&mut self, level: u32) {
         // println!("Backtrack to {}", level);
-        for (_var, maybe_var_data) in self.valuation.0.iter_mut().enumerate() {
-            if let Some(var_data) = maybe_var_data {
-                if var_data.reason.level() >= level {
+        for (_var, var_data) in self.valuation.0.iter_mut().enumerate() {
+            if let Some(var_value) = var_data.value {
+                if var_value.reason.level() >= level {
                     // println!("  Forget {}@{}", var, var_data.reason.level());
-                    *maybe_var_data = None;
+                    var_data.value = None;
                 }
             }
         }
@@ -381,7 +388,13 @@ impl Lilsat {
     fn solve(formula: &Formula) -> Answer {
         let mut lilsat = Lilsat {
             formula: formula.clone(),
-            valuation: Valuation(vec![None; formula.num_vars()]),
+            valuation: Valuation(vec![
+                VarData {
+                    value: None,
+                    watched_by: Vec::new()
+                };
+                formula.num_vars()
+            ]),
         };
         lilsat.run()
     }
