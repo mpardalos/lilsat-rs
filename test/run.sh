@@ -1,11 +1,15 @@
 #!/bin/bash
 
-trap 'exit 130' INT
-
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 LILSAT="$(cargo --config "target.'cfg(unix)'.runner = 'ls'" run --release)"
 TIMEOUT=10
 RESULTS_DIR=$(mktemp -d)
+
+cleanup() {
+    rm -rf "$RESULTS_DIR"
+}
+
+trap 'cleanup; exit 130' INT
 
 getSATLIBTests() {
     suite="$1"
@@ -101,4 +105,4 @@ if [ -f "$RESULTS_DIR/timeout" ]; then
     done < "$RESULTS_DIR/timeout"
 fi
 
-rm -rf "$RESULTS_DIR"
+cleanup
