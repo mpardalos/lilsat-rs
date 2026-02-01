@@ -400,6 +400,42 @@ impl Lilsat {
     }
 }
 
+fn opt_or(b1: Option<bool>, b2: Option<bool>) -> Option<bool> {
+    match (b1, b2) {
+        (Some(false), _) => b2,
+        (_, Some(false)) => b1,
+        (Some(true), _) => Some(true),
+        (_, Some(true)) => Some(true),
+        (None, None) => None,
+    }
+}
+
+fn opt_and(b1: Option<bool>, b2: Option<bool>) -> Option<bool> {
+    match (b1, b2) {
+        (Some(true), _) => b2,
+        (_, Some(true)) => b1,
+        (Some(false), _) => Some(false),
+        (_, Some(false)) => Some(false),
+        (None, None) => None,
+    }
+}
+
+fn eval_clause(valuation: &Valuation, clause: &Clause) -> Option<bool> {
+    clause
+        .0
+        .iter()
+        .map(|&lit| valuation.eval_lit(lit))
+        .fold(Some(false), opt_or)
+}
+
+fn eval_formula(valuation: &Valuation, formula: &Formula) -> Option<bool> {
+    formula
+        .0
+        .iter()
+        .map(|clause| eval_clause(valuation, clause))
+        .fold(Some(true), opt_and)
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -420,5 +456,11 @@ fn main() {
         std::process::exit(1);
     });
 
-    println!("{}", Lilsat::solve(&formula));
+    let answer = Lilsat::solve(&formula);
+
+    if let Answer::SAT(valuation) = &answer {
+        assert!(eval_formula(valuation, &formula) == Some(true));
+    }
+
+    println!("{}", answer);
 }
